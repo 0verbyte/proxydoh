@@ -4,7 +4,6 @@ Simple server that supports proxying DNS requests over HTTPS as specified in [DN
 
 DNS requests are sent as GET/POST requests using DNS wire format to HTTPS server providing DNS resolution.
 
->NOTE: experimental project inspired
 
 ## Usage
 ```
