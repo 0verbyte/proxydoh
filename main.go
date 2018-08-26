@@ -101,6 +101,15 @@ func createGETRequest(dnsQuery []byte) (*http.Request, error) {
 func handleConnection(conn *net.UDPConn, addr *net.UDPAddr, dnsQuery []byte) {
 	client := &http.Client{}
 
+	cacheReply, ok, _ := LookupCacheResult(dnsQuery)
+	if ok {
+		_, err := conn.WriteToUDP(cacheReply, addr)
+		if err != nil {
+			log.Println("Error writing to socket")
+		}
+		return
+	}
+
 	var req *http.Request
 	var err error
 	if httpMethod == "GET" {
@@ -133,6 +142,8 @@ func handleConnection(conn *net.UDPConn, addr *net.UDPAddr, dnsQuery []byte) {
 	if err != nil {
 		log.Println("Error reading response body:", err)
 	}
+
+	AddCacheResult(dnsQuery, body, resp.Header)
 
 	n, err := conn.WriteToUDP(body, addr)
 	if err != nil {
