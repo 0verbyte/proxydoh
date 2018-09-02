@@ -1,4 +1,4 @@
-package main
+package cache
 
 import (
 	"crypto/md5"
@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -24,17 +25,11 @@ const (
 	DNSHeaderSize = 8
 )
 
-var cache Cache
-
-func init() {
-	cache = Cache{
-		Queries: make(map[[KeyCheckSumSize]byte]DNSResponse),
-	}
-}
-
-// Cache stores cached DNS queries
-type Cache struct {
-	Queries map[[KeyCheckSumSize]byte]DNSResponse
+var cache = struct {
+	sync.Mutex
+	values map[[KeyCheckSumSize]byte]DNSResponse
+}{
+	values: make(map[[KeyCheckSumSize]byte]DNSResponse),
 }
 
 // DNSResponse stores DNS reply in wire-format and TTL
@@ -43,17 +38,19 @@ type DNSResponse struct {
 	TTL   int64
 }
 
-// LookupCacheResult check if dnsquery is still in cache and hasn't expired
-func LookupCacheResult(dnsQuery []byte) ([]byte, bool, error) {
+// Get check if dnsquery is still in cache and hasn't expired
+func Get(dnsQuery []byte) ([]byte, bool, error) {
+	cache.Lock()
 	keyHash := md5.Sum(dnsQuery[DNSHeaderSize:])
-	c, ok := cache.Queries[keyHash]
+	c, ok := cache.values[keyHash]
+	defer cache.Unlock()
 	if !ok {
 		return nil, false, nil
 	}
 
 	if c.TTL <= time.Now().Unix() {
 		log.Println("Cache expired...")
-		delete(cache.Queries, keyHash)
+		delete(cache.values, keyHash)
 		return nil, false, nil
 	}
 
@@ -65,8 +62,8 @@ func LookupCacheResult(dnsQuery []byte) ([]byte, bool, error) {
 	return reply, true, nil
 }
 
-// AddCacheResult caches DNS query reply
-func AddCacheResult(dnsQuery []byte, dnsReply []byte, headers http.Header) error {
+// Add caches DNS query reply
+func Add(dnsQuery []byte, dnsReply []byte, headers http.Header) error {
 	dnsResponse := DNSResponse{
 		Reply: dnsReply,
 	}
@@ -87,13 +84,17 @@ func AddCacheResult(dnsQuery []byte, dnsReply []byte, headers http.Header) error
 	ck := md5.Sum(dnsQuery[DNSHeaderSize:])
 
 	// Create cache key from DNS query
-	cache.Queries[ck] = dnsResponse
+	cache.Lock()
+	cache.values[ck] = dnsResponse
+	defer cache.Unlock()
 	log.Printf("Saved DNS query to cache: %x\n", ck)
 
 	return nil
 }
 
 func logSavedCache(key [KeyCheckSumSize]byte) {
-	v := cache.Queries[key]
+	cache.Lock()
+	v := cache.values[key]
+	defer cache.Unlock()
 	fmt.Println("Cache TTL", v.TTL)
 }

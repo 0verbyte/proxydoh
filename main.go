@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+
+	"github.com/voidpirate/proxydoh/cache"
 )
 
 const (
@@ -101,7 +103,7 @@ func createGETRequest(dnsQuery []byte) (*http.Request, error) {
 func handleConnection(conn *net.UDPConn, addr *net.UDPAddr, dnsQuery []byte) {
 	client := &http.Client{}
 
-	cacheReply, ok, _ := LookupCacheResult(dnsQuery)
+	cacheReply, ok, _ := cache.Get(dnsQuery)
 	if ok {
 		_, err := conn.WriteToUDP(cacheReply, addr)
 		if err != nil {
@@ -143,7 +145,7 @@ func handleConnection(conn *net.UDPConn, addr *net.UDPAddr, dnsQuery []byte) {
 		log.Println("Error reading response body:", err)
 	}
 
-	AddCacheResult(dnsQuery, body, resp.Header)
+	cache.Add(dnsQuery, body, resp.Header)
 
 	n, err := conn.WriteToUDP(body, addr)
 	if err != nil {
