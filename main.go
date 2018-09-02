@@ -27,9 +27,13 @@ const (
 var (
 	dohServer string
 
-	host       string
-	port       int
-	httpMethod string
+	host            string
+	port            int
+	httpMethod      string
+	requestHandlers = map[string]func([]byte) (*http.Request, error){
+		"GET":  createGETRequest,
+		"POST": createPOSTRequest,
+	}
 )
 
 func init() {
@@ -39,16 +43,20 @@ func init() {
 	flag.StringVar(&httpMethod, "httpMethod", "GET", "Request method used when sending DNS query to HTTPS server")
 
 	flag.Parse()
-
-	httpMethod = strings.ToUpper(httpMethod)
 }
 
 func main() {
+	httpMethod = strings.ToUpper(httpMethod)
+	requestHandler, ok := requestHandlers[httpMethod]
+	if !ok {
+		log.Fatalf("HTTP method not supported: %s", httpMethod)
+	}
+	log.Println("Sending DNS over HTTPS using", httpMethod)
+
 	conn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.ParseIP(host), Port: port})
 	if err != nil {
 		log.Fatalln(err)
 	}
-
 	log.Println("Started UDP server:", net.JoinHostPort(host, strconv.Itoa(port)))
 
 	for {
@@ -58,7 +66,7 @@ func main() {
 			log.Println("Error reading from socket:", err)
 		}
 
-		go handleConnection(conn, addr, buffer[:n])
+		go handleConnection(conn, addr, buffer[:n], requestHandler)
 	}
 }
 
@@ -100,7 +108,7 @@ func createGETRequest(dnsQuery []byte) (*http.Request, error) {
 	return req, nil
 }
 
-func handleConnection(conn *net.UDPConn, addr *net.UDPAddr, dnsQuery []byte) {
+func handleConnection(conn *net.UDPConn, addr *net.UDPAddr, dnsQuery []byte, fn func([]byte) (*http.Request, error)) {
 	client := &http.Client{}
 
 	cacheReply, ok, _ := cache.Get(dnsQuery)
@@ -112,17 +120,7 @@ func handleConnection(conn *net.UDPConn, addr *net.UDPAddr, dnsQuery []byte) {
 		return
 	}
 
-	var req *http.Request
-	var err error
-	if httpMethod == "GET" {
-		req, err = createGETRequest(dnsQuery)
-	} else if httpMethod == "POST" {
-		req, err = createPOSTRequest(dnsQuery)
-	} else {
-		log.Println("HTTP method not implemented:", httpMethod)
-		return
-	}
-
+	req, err := fn(dnsQuery)
 	if err != nil {
 		log.Println("Failed creating request:", err)
 	}
