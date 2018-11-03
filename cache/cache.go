@@ -1,7 +1,7 @@
 package cache
 
 import (
-	"crypto/md5"
+	"crypto/sha256"
 	"fmt"
 	"log"
 	"net/http"
@@ -12,16 +12,16 @@ import (
 )
 
 const (
-	// CacheControl header
+	// CacheControl response header
 	CacheControl = "Cache-Control"
 
 	// CacheValueDelimiter Cache-Control header value is delimited by "=" (e.g. max-age=177)
 	CacheValueDelimiter = "="
 
-	// KeyCheckSumSize size of MD5 checksum in bytes
-	KeyCheckSumSize = 16
+	// KeyCheckSumSize The size of a SHA256 checksum in bytes.
+	KeyCheckSumSize = 32
 
-	// DNSHeaderSize size of DNS header
+	// DNSHeaderSize size of DNS header.
 	DNSHeaderSize = 8
 )
 
@@ -41,8 +41,8 @@ type DNSResponse struct {
 // Get check if dnsquery is still in cache and hasn't expired
 func Get(dnsQuery []byte) ([]byte, bool, error) {
 	cache.Lock()
-	keyHash := md5.Sum(dnsQuery[DNSHeaderSize:])
-	c, ok := cache.values[keyHash]
+	cacheKey := sha256.Sum256(dnsQuery[DNSHeaderSize:])
+	c, ok := cache.values[cacheKey]
 	defer cache.Unlock()
 	if !ok {
 		return nil, false, nil
@@ -50,7 +50,7 @@ func Get(dnsQuery []byte) ([]byte, bool, error) {
 
 	if c.TTL <= time.Now().Unix() {
 		log.Println("Cache expired...")
-		delete(cache.values, keyHash)
+		delete(cache.values, cacheKey)
 		return nil, false, nil
 	}
 
@@ -68,26 +68,24 @@ func Add(dnsQuery []byte, dnsReply []byte, headers http.Header) error {
 		Reply: dnsReply,
 	}
 
-	// Parse Cache-Control header extracting max-age from the value
 	ttlHeader := headers.Get(CacheControl)
 	if ttlHeader == "" {
 		return fmt.Errorf("%s header does not exist or is empty", CacheControl)
 	}
 
 	value := strings.Split(ttlHeader, CacheValueDelimiter)
-	ttl, err := strconv.Atoi(value[1])
+	ttl, err := strconv.Atoi(strings.TrimSpace(value[1]))
 	if err != nil {
 		return err
 	}
 	dnsResponse.TTL = int64(ttl) + time.Now().Unix()
 
-	ck := md5.Sum(dnsQuery[DNSHeaderSize:])
+	cacheKey := sha256.Sum256(dnsQuery[DNSHeaderSize:])
 
-	// Create cache key from DNS query
 	cache.Lock()
-	cache.values[ck] = dnsResponse
+	cache.values[cacheKey] = dnsResponse
 	defer cache.Unlock()
-	log.Printf("Saved DNS query to cache: %x\n", ck)
+	log.Printf("Saved DNS query to cache: %x\n", cacheKey)
 
 	return nil
 }
