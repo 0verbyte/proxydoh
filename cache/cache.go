@@ -21,8 +21,10 @@ const (
 	// KeyCheckSumSize The size of a SHA256 checksum in bytes.
 	KeyCheckSumSize = 32
 
-	// DNSHeaderSize size of DNS header.
-	DNSHeaderSize = 8
+	// DNSHeaderID A 16 bit identifier assigned by the program that
+	// generates any kind of query. This identifier is copied the corresponding
+	// reply and can be used by the requester to match up replies to outstanding queries.
+	DNSHeaderID = 2
 )
 
 var cache = struct {
@@ -41,7 +43,7 @@ type DNSResponse struct {
 // Get check if dnsquery is still in cache and hasn't expired
 func Get(dnsQuery []byte) ([]byte, bool, error) {
 	cache.Lock()
-	cacheKey := sha256.Sum256(dnsQuery[DNSHeaderSize:])
+	cacheKey := sha256.Sum256(dnsQuery[DNSHeaderID:])
 	c, ok := cache.values[cacheKey]
 	defer cache.Unlock()
 	if !ok {
@@ -54,11 +56,9 @@ func Get(dnsQuery []byte) ([]byte, bool, error) {
 		return nil, false, nil
 	}
 
-	// Add the current ID to cached DNS query reply
-	reply := append(dnsQuery[:DNSHeaderSize], c.Reply[DNSHeaderSize:]...)
-
 	log.Println("Found DNS query in cache, ttl:", c.TTL-time.Now().Unix())
 
+	reply := append(dnsQuery[:DNSHeaderID], c.Reply[DNSHeaderID:]...)
 	return reply, true, nil
 }
 
@@ -80,7 +80,7 @@ func Add(dnsQuery []byte, dnsReply []byte, headers http.Header) error {
 	}
 	dnsResponse.TTL = int64(ttl) + time.Now().Unix()
 
-	cacheKey := sha256.Sum256(dnsQuery[DNSHeaderSize:])
+	cacheKey := sha256.Sum256(dnsQuery[DNSHeaderID:])
 
 	cache.Lock()
 	cache.values[cacheKey] = dnsResponse
