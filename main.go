@@ -132,8 +132,8 @@ func createGETRequest(dnsQuery []byte) (*http.Request, error) {
 func handleConnection(conn *net.UDPConn, addr *net.UDPAddr, dnsQuery []byte, fn func([]byte) (*http.Request, error)) {
 	client := &http.Client{}
 
-	cacheReply, ok, _ := cache.Get(dnsQuery)
-	if ok {
+	cacheReply := cache.Get(dnsQuery)
+	if cacheReply != nil {
 		_, err := conn.WriteToUDP(cacheReply, addr)
 		if err != nil {
 			log.WithFields(log.Fields{

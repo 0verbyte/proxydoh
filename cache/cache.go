@@ -42,13 +42,13 @@ type DNSResponse struct {
 }
 
 // Get check if dnsquery is still in cache and hasn't expired
-func Get(dnsQuery []byte) ([]byte, bool, error) {
+func Get(dnsQuery []byte) []byte {
 	cache.Lock()
 	cacheKey := sha256.Sum256(dnsQuery[DNSHeaderID:])
 	c, ok := cache.values[cacheKey]
 	defer cache.Unlock()
 	if !ok {
-		return nil, false, nil
+		return nil
 	}
 
 	if c.TTL <= time.Now().Unix() {
@@ -56,7 +56,7 @@ func Get(dnsQuery []byte) ([]byte, bool, error) {
 			"key": fmt.Sprintf("%x", cacheKey),
 		}).Debug("Cache expired")
 		delete(cache.values, cacheKey)
-		return nil, false, nil
+		return nil
 	}
 
 	log.WithFields(log.Fields{
@@ -65,7 +65,7 @@ func Get(dnsQuery []byte) ([]byte, bool, error) {
 	}).Debug("Cache hit for dns query")
 
 	reply := append(dnsQuery[:DNSHeaderID], c.Reply[DNSHeaderID:]...)
-	return reply, true, nil
+	return reply
 }
 
 // Add caches DNS query reply
@@ -79,6 +79,7 @@ func Add(dnsQuery []byte, dnsReply []byte, headers http.Header) {
 		log.WithFields(log.Fields{
 			"header": CacheControl,
 		}).Warn("header does not exist or is empty")
+		return
 	}
 
 	value := strings.Split(ttlHeader, CacheValueDelimiter)
@@ -88,6 +89,7 @@ func Add(dnsQuery []byte, dnsReply []byte, headers http.Header) {
 			"header": CacheControl,
 			"field":  "max-age",
 		}).Warn("Unable to convert header to int")
+		return
 	}
 	dnsResponse.TTL = int64(ttl) + time.Now().Unix()
 
