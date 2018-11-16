@@ -6,12 +6,12 @@ import (
 	"flag"
 	"fmt"
 	"io/ioutil"
-	"log"
 	"net"
 	"net/http"
 	"strconv"
 	"strings"
 
+	log "github.com/sirupsen/logrus"
 	"github.com/voidpirate/proxydoh/cache"
 )
 
@@ -34,6 +34,7 @@ var (
 		"GET":  createGETRequest,
 		"POST": createPOSTRequest,
 	}
+	debug bool
 )
 
 func init() {
@@ -41,29 +42,45 @@ func init() {
 	flag.StringVar(&host, "host", "0.0.0.0", "Server listen address")
 	flag.IntVar(&port, "port", 5553, "Server listen port")
 	flag.StringVar(&httpMethod, "httpMethod", "GET", "Request method used when sending DNS query to HTTPS server")
+	flag.BoolVar(&debug, "debug", false, "Run the server in debug mode")
 
 	flag.Parse()
+
+	if debug {
+		log.SetLevel(log.DebugLevel)
+	}
 }
 
 func main() {
 	httpMethod = strings.ToUpper(httpMethod)
 	requestHandler, ok := requestHandlers[httpMethod]
 	if !ok {
-		log.Fatalf("HTTP method not supported: %s", httpMethod)
+		log.WithFields(log.Fields{
+			"method": httpMethod,
+		}).Fatal("HTTP method not supported:")
 	}
-	log.Println("Sending DNS over HTTPS using", httpMethod)
+
+	log.WithFields(log.Fields{
+		"method": httpMethod,
+	}).Debug("Sending DNS over HTTPS")
 
 	conn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.ParseIP(host), Port: port})
 	if err != nil {
 		log.Fatalln(err)
 	}
-	log.Println("Started UDP server:", net.JoinHostPort(host, strconv.Itoa(port)))
+
+	log.WithFields(log.Fields{
+		"host": host,
+		"port": port,
+	}).Info("Started UDP server:", net.JoinHostPort(host, strconv.Itoa(port)))
 
 	for {
 		buffer := make([]byte, BufferSize)
 		n, addr, err := conn.ReadFromUDP(buffer)
 		if err != nil {
-			log.Println("Error reading from socket:", err)
+			log.WithFields(log.Fields{
+				"error": err,
+			}).Fatal("Error reading from socket:", err)
 		}
 
 		go handleConnection(conn, addr, buffer[:n], requestHandler)
@@ -87,7 +104,9 @@ func createPOSTRequest(dnsQuery []byte) (*http.Request, error) {
 
 	addDNSRequestHeaders(dnsQuery, req)
 
-	log.Println("Created POST DNS HTTP request")
+	log.WithFields(log.Fields{
+		"method": "POST",
+	}).Debug("Created DNS HTTP request")
 
 	return req, nil
 }
@@ -103,7 +122,9 @@ func createGETRequest(dnsQuery []byte) (*http.Request, error) {
 
 	addDNSRequestHeaders(dnsQuery, req)
 
-	log.Println("Created GET DNS HTTP request")
+	log.WithFields(log.Fields{
+		"method": "GET",
+	}).Debug("Created DNS HTTP request")
 
 	return req, nil
 }
@@ -115,24 +136,33 @@ func handleConnection(conn *net.UDPConn, addr *net.UDPAddr, dnsQuery []byte, fn 
 	if ok {
 		_, err := conn.WriteToUDP(cacheReply, addr)
 		if err != nil {
-			log.Println("Error writing to socket")
+			log.WithFields(log.Fields{
+				"error": err,
+			}).Error("Error writing to socket")
 		}
 		return
 	}
 
 	req, err := fn(dnsQuery)
 	if err != nil {
-		log.Println("Failed creating request:", err)
+		log.WithFields(log.Fields{
+			"error": err,
+		}).Error("Failed creating request")
 	}
 
 	resp, err := client.Do(req)
 	if err != nil {
-		log.Println("Error sending request:", err)
+		log.WithFields(log.Fields{
+			"error":    err,
+			"upstream": dohServer,
+		}).Error("Sending DNS request to upstream HTTP DNS server")
 		return
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		log.Printf("Invalid HTTP response (status code: %d)\n", resp.StatusCode)
+		log.WithFields(log.Fields{
+			"code": resp.StatusCode,
+		}).Error("Invalid HTTP response from upstream")
 		return
 	}
 
@@ -140,16 +170,22 @@ func handleConnection(conn *net.UDPConn, addr *net.UDPAddr, dnsQuery []byte, fn 
 
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		log.Println("Error reading response body:", err)
+		log.WithFields(log.Fields{
+			"error": err,
+		}).Error("Error reading response body from upstream")
 	}
 
 	cache.Add(dnsQuery, body, resp.Header)
 
 	n, err := conn.WriteToUDP(body, addr)
 	if err != nil {
-		log.Println("Error writing to UDP socket:", err)
+		log.WithFields(log.Fields{
+			"error": err,
+		}).Error("Error writing to client UDP connection")
 		return
 	}
 
-	log.Printf("Replied to DNS query with DNS response (%d bytes sent)", n)
+	log.WithFields(log.Fields{
+		"totalBytes": n,
+	}).Debug("Replied to DNS query")
 }

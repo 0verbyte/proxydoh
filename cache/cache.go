@@ -3,12 +3,13 @@ package cache
 import (
 	"crypto/sha256"
 	"fmt"
-	"log"
 	"net/http"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	log "github.com/sirupsen/logrus"
 )
 
 const (
@@ -51,32 +52,42 @@ func Get(dnsQuery []byte) ([]byte, bool, error) {
 	}
 
 	if c.TTL <= time.Now().Unix() {
-		log.Println("Cache expired...")
+		log.WithFields(log.Fields{
+			"key": fmt.Sprintf("%x", cacheKey),
+		}).Debug("Cache expired")
 		delete(cache.values, cacheKey)
 		return nil, false, nil
 	}
 
-	log.Println("Found DNS query in cache, ttl:", c.TTL-time.Now().Unix())
+	log.WithFields(log.Fields{
+		"ttl": c.TTL - time.Now().Unix(),
+		"key": fmt.Sprintf("%x", cacheKey),
+	}).Debug("Cache hit for dns query")
 
 	reply := append(dnsQuery[:DNSHeaderID], c.Reply[DNSHeaderID:]...)
 	return reply, true, nil
 }
 
 // Add caches DNS query reply
-func Add(dnsQuery []byte, dnsReply []byte, headers http.Header) error {
+func Add(dnsQuery []byte, dnsReply []byte, headers http.Header) {
 	dnsResponse := DNSResponse{
 		Reply: dnsReply,
 	}
 
 	ttlHeader := headers.Get(CacheControl)
 	if ttlHeader == "" {
-		return fmt.Errorf("%s header does not exist or is empty", CacheControl)
+		log.WithFields(log.Fields{
+			"header": CacheControl,
+		}).Warn("header does not exist or is empty")
 	}
 
 	value := strings.Split(ttlHeader, CacheValueDelimiter)
 	ttl, err := strconv.Atoi(strings.TrimSpace(value[1]))
 	if err != nil {
-		return err
+		log.WithFields(log.Fields{
+			"header": CacheControl,
+			"field":  "max-age",
+		}).Warn("Unable to convert header to int")
 	}
 	dnsResponse.TTL = int64(ttl) + time.Now().Unix()
 
@@ -85,14 +96,7 @@ func Add(dnsQuery []byte, dnsReply []byte, headers http.Header) error {
 	cache.Lock()
 	cache.values[cacheKey] = dnsResponse
 	defer cache.Unlock()
-	log.Printf("Saved DNS query to cache: %x\n", cacheKey)
-
-	return nil
-}
-
-func logSavedCache(key [KeyCheckSumSize]byte) {
-	cache.Lock()
-	v := cache.values[key]
-	defer cache.Unlock()
-	fmt.Println("Cache TTL", v.TTL)
+	log.WithFields(log.Fields{
+		"key": fmt.Sprintf("%x", cacheKey),
+	}).Debug("Saved DNS query to cache")
 }
